@@ -1,21 +1,24 @@
 # Authentication Process Flow
 
-This project uses Microsoft Entra External ID for identity, but the app still maintains its own local user record and JWT session.
+This project uses Microsoft Entra External ID for identity and sign-in.
 
-There are two distinct layers:
+Core requirement implemented:
 
-1. Entra proves who the user is or stores their credential.
-2. The backend creates or updates the local MongoDB user and issues the app's own tokens.
+1. User registers in this app with required details.
+2. Backend creates that account in Entra External ID.
+3. User signs in using Microsoft Entra.
+
+OTP is not required for the core login/registration flow.
 
 ---
 
 ## High-Level Model
 
 - Entra account: the identity account created in Microsoft Entra External ID.
-- Local app user: the MongoDB user document used for roles, profile, and app data.
+- Local app user: optional app profile/role mirror in MongoDB.
 - App session: the JWT access token and refresh token stored in HttpOnly cookies.
 
-This means a successful Entra sign-in does not directly log the user into the app by itself. The backend still exchanges the Entra result for app-specific tokens.
+This means Entra is the source of authentication, while the backend still manages app session cookies and optional local app data.
 
 ---
 
@@ -28,7 +31,7 @@ The direct registration form creates the account in Entra first, then mirrors it
 1. The frontend registration form submits `email`, `displayName`, optional name fields, and `password` to `POST /api/auth/register`.
 2. The backend validates that Entra is configured.
 3. The backend calls Microsoft Graph and creates a local Entra account in the External tenant.
-4. The backend saves or updates the matching MongoDB user with `entraExternalId` set to the Entra user id.
+4. The backend optionally saves or updates a matching local MongoDB user with `entraExternalId` set to the Entra user id.
 5. The API returns a success message telling the user to continue with Microsoft sign-in.
 
 ### Important detail
@@ -54,23 +57,9 @@ sequenceDiagram
 
 ---
 
-## OTP Flow
+## OTP Note
 
-The OTP flow is separate from direct registration, but it can also provision users into Entra.
-
-### What happens
-
-1. The frontend requests an OTP with `POST /api/auth/otp/request`.
-2. The user submits the OTP to `POST /api/auth/otp/verify`.
-3. If the user is new, the backend creates the local MongoDB user.
-4. The backend also attempts to provision the same email into Entra External ID.
-5. The backend issues app JWT tokens and stores them as HttpOnly cookies.
-
-### Why this exists
-
-This lets an email-based user later use the Entra-based sign-in path, because the app tries to keep the Entra identity and local user record aligned.
-
----
+OTP can exist as an optional add-on flow, but it is not required for the Entra-first requirement and is not part of the primary registration and login path.
 
 ## Entra Login Flow
 
@@ -86,7 +75,7 @@ The Microsoft sign-in button starts an OAuth/OpenID Connect flow through the bac
 6. The backend validates the `state` cookie to prevent CSRF.
 7. The backend exchanges the code for tokens using MSAL.
 8. The backend reads the Entra claims, especially the user id and email.
-9. The backend finds or creates the local MongoDB user and links it with `entraExternalId`.
+9. The backend finds or creates the optional local app user and links it with `entraExternalId`.
 10. The backend issues its own access token and refresh token.
 11. The backend stores those tokens in HttpOnly cookies and redirects the user to the dashboard.
 
@@ -154,8 +143,8 @@ This keeps the application session model independent from the Microsoft token li
 
 ## Files Involved
 
-- `frontend/src/services/authService.js`: starts registration, OTP, and Entra login requests.
-- `backend/src/routes/auth.js`: main registration, OTP, callback, session, refresh, and logout routes.
+- `frontend/src/services/authService.js`: starts registration and Entra login requests.
+- `backend/src/routes/auth.js`: main registration, callback, session, refresh, and logout routes.
 - `backend/src/services/entraUserService.js`: Microsoft Graph user creation and lookup.
 - `backend/src/config/msal.js`: MSAL auth URL and code exchange logic.
 - `backend/src/services/tokenService.js`: app JWT issuance, cookie handling, and refresh rotation.
@@ -164,7 +153,7 @@ This keeps the application session model independent from the Microsoft token li
 
 ## Short Summary
 
-- Direct registration creates the user in Entra first, then mirrors that user locally.
+- Direct registration creates the user in Entra first, then optionally mirrors that user locally.
 - Entra login authenticates the user with Microsoft, then the backend creates the app session.
-- Local MongoDB users are still required because the app stores roles and profile state outside Entra.
+- OTP is optional and not part of the core requirement flow.
 - Redis is used to manage refresh token validity for logout and rotation.
