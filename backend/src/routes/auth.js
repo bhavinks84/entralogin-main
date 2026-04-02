@@ -10,7 +10,12 @@ const User = require('../models/User');
 const { sendOtp, verifyOtp } = require('../services/otpService');
 const { issueTokens, rotateRefreshToken, revokeRefreshToken, setCookies, clearCookies } = require('../services/tokenService');
 const { requestPasswordReset, resetPassword } = require('../services/passwordService');
-const { createEntraUser, findEntraUserByEmail, isEntraConfigured } = require('../services/entraUserService');
+const {
+  createEntraUser,
+  findEntraUserByEmail,
+  isEntraConfigured,
+  getGraphPermissionStatus,
+} = require('../services/entraUserService');
 const { getAuthCodeUrl, acquireTokenByCode } = require('../config/msal');
 
 const router = express.Router();
@@ -222,6 +227,15 @@ router.get('/entra', async (req, res) => {
     console.error('Entra redirect error:', err);
     res.redirect(`${process.env.FRONTEND_URL}/login?error=entra_init_failed`);
   }
+});
+
+/**
+ * GET /api/auth/entra/permissions-check
+ * Inspect Graph application roles currently available to this backend app.
+ */
+router.get('/entra/permissions-check', async (_req, res) => {
+  const status = await getGraphPermissionStatus();
+  res.status(status.hasAllRequiredRoles ? 200 : 503).json(status);
 });
 
 /**

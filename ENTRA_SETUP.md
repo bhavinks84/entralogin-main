@@ -8,6 +8,14 @@ Follow these steps exactly to configure Entra External ID for this project.
 
 > External ID uses a **separate tenant** from your workforce (employee) Azure AD. Do not use your main Azure tenant.
 
+> Current Microsoft portal behavior: you may see an extra **Add a subscription** step.
+> In many tenants, creating an External tenant now requires:
+> - an **Azure subscription**
+> - a **resource group**
+> - an account with at least **Tenant Creator** rights on that subscription/resource group
+>
+> If this is your first External tenant, Microsoft may offer a trial option that does not require a subscription. Otherwise, the subscription step is expected.
+
 1. Go to [https://entra.microsoft.com](https://entra.microsoft.com) and sign in with a Microsoft account.
 2. In the left sidebar, click **"Microsoft Entra ID"** → **"Overview"** → **"Manage tenants"**.
 3. Click **"+ Create"**.
@@ -16,8 +24,12 @@ Follow these steps exactly to configure Entra External ID for this project.
    - **Organization name**: e.g. `My App External`
    - **Initial domain name**: e.g. `myapp` → becomes `myapp.onmicrosoft.com`
    - **Country/Region**: Your region
-6. Click **Review + Create**, then **Create**.
-7. Wait ~1 minute for the tenant to provision, then click **"Switch to the new tenant"**.
+6. If the portal shows **Add a subscription**, select:
+   - **Subscription**
+   - **Resource group**
+   - resource group location if prompted
+7. Click **Review + Create**, then **Create**.
+8. Wait for the tenant to provision, then click **"Switch to the new tenant"**.
 
 ---
 

@@ -2,6 +2,7 @@ const { ConfidentialClientApplication } = require('@azure/msal-node');
 const crypto = require('crypto');
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+const REQUIRED_GRAPH_APP_ROLES = ['User.ReadWrite.All', 'Organization.Read.All'];
 
 // Separate MSAL instance for Graph API client-credentials flow.
 // Uses the standard AAD authority (not the CIAM ciamlogin.com endpoint, which
@@ -26,6 +27,21 @@ const getGraphToken = async () => {
   });
   if (!result?.accessToken) throw new Error('Failed to acquire Microsoft Graph token.');
   return result.accessToken;
+};
+
+const decodeJwtPayload = (token = '') => {
+  const parts = String(token).split('.');
+  if (parts.length < 2) return null;
+
+  const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+  const padding = payload.length % 4;
+  const normalized = padding ? payload + '='.repeat(4 - padding) : payload;
+
+  try {
+    return JSON.parse(Buffer.from(normalized, 'base64').toString('utf8'));
+  } catch {
+    return null;
+  }
 };
 
 const getTenantDomainsFromGraph = async (token) => {
@@ -92,6 +108,33 @@ const getIssuerCandidates = () => {
   return Array.from(new Set(candidates.filter(Boolean)));
 };
 
+const toMailNickname = (email = '') => {
+  const localPart = String(email || '').split('@')[0] || 'user';
+  const normalized = localPart.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const safe = normalized || 'user';
+  // Keep nickname simple and Graph-friendly: alphanumeric, starts with a letter.
+  const startsWithLetter = /^[a-z]/.test(safe) ? safe : `u${safe}`;
+  return startsWithLetter.slice(0, 64);
+};
+
+const toUserPrincipalName = (email = '', tenantDomain = '') => {
+  const nickname = toMailNickname(email);
+  const domain = String(tenantDomain || '').trim().toLowerCase();
+  if (!domain) return '';
+  return `${nickname}@${domain}`;
+};
+
+const buildGraphPrivilegeError = (graphMessage = '') => {
+  const err = new Error(
+    'Microsoft Graph registration permission is missing. ' +
+      'Add application permission User.ReadWrite.All and grant admin consent in the same tenant as ENTRA_TENANT_ID. ' +
+      'If consent was just granted, wait 1-2 minutes and retry.'
+  );
+  err.status = 403;
+  err.details = graphMessage;
+  return err;
+};
+
 /**
  * Returns true only when real Entra credentials are present.
  * In dev mode (dummy values) all Graph calls are skipped.
@@ -138,6 +181,8 @@ const createEntraUser = async ({ email, displayName, givenName, surname, passwor
 
   for (const tenantDomain of tenantDomains) {
     const body = {
+      accountEnabled: true,
+        creationType: 'LocalAccount',
       displayName: displayName || email.split('@')[0],
       ...(givenName && { givenName }),
       ...(surname && { surname }),
@@ -180,6 +225,18 @@ const createEntraUser = async ({ email, displayName, givenName, surname, passwor
     // Try next issuer candidate when issuer/domain mismatch is returned.
     if (msg.toLowerCase().includes('issuer should match tenants domainname')) {
       continue;
+    }
+
+    // Try next tenant domain if Graph rejects the UPN domain portion.
+    if (msg.toLowerCase().includes('domain portion of the userprincipalname property is invalid')) {
+      continue;
+    }
+
+    if (
+      code === 'Authorization_RequestDenied' ||
+      msg.toLowerCase().includes('insufficient privileges')
+    ) {
+      throw buildGraphPrivilegeError(lastErrorMessage);
     }
 
     throw new Error(`Microsoft Graph API error: ${lastErrorMessage}`);
@@ -245,4 +302,48 @@ const generateSecurePassword = () => {
   return chars.join('');
 };
 
-module.exports = { createEntraUser, findEntraUserByEmail, isEntraConfigured };
+const getGraphPermissionStatus = async () => {
+  if (!isEntraConfigured()) {
+    return {
+      configured: false,
+      tokenAcquired: false,
+      hasAllRequiredRoles: false,
+      requiredRoles: REQUIRED_GRAPH_APP_ROLES,
+      grantedRoles: [],
+      missingRoles: REQUIRED_GRAPH_APP_ROLES,
+      message: 'Entra is not configured. Fill ENTRA_* values in backend/.env.',
+    };
+  }
+
+  try {
+    const token = await getGraphToken();
+    const payload = decodeJwtPayload(token) || {};
+    const grantedRoles = Array.isArray(payload.roles) ? payload.roles : [];
+    const missingRoles = REQUIRED_GRAPH_APP_ROLES.filter((role) => !grantedRoles.includes(role));
+
+    return {
+      configured: true,
+      tokenAcquired: true,
+      hasAllRequiredRoles: missingRoles.length === 0,
+      requiredRoles: REQUIRED_GRAPH_APP_ROLES,
+      grantedRoles,
+      missingRoles,
+      tenantId: process.env.ENTRA_TENANT_ID,
+      appId: process.env.ENTRA_CLIENT_ID,
+    };
+  } catch (err) {
+    return {
+      configured: true,
+      tokenAcquired: false,
+      hasAllRequiredRoles: false,
+      requiredRoles: REQUIRED_GRAPH_APP_ROLES,
+      grantedRoles: [],
+      missingRoles: REQUIRED_GRAPH_APP_ROLES,
+      tenantId: process.env.ENTRA_TENANT_ID,
+      appId: process.env.ENTRA_CLIENT_ID,
+      message: err.message,
+    };
+  }
+};
+
+module.exports = { createEntraUser, findEntraUserByEmail, isEntraConfigured, getGraphPermissionStatus };
