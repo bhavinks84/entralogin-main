@@ -39,6 +39,15 @@ powershell -ExecutionPolicy Bypass -File deploy.ps1
 
 The script interactively prompts for every required value, prints a summary, and asks for confirmation before making any changes.
 
+Default local port mapping used by the current setup:
+
+- Public URL (nginx): `http://localhost:5000`
+- Backend API service: `http://localhost:5001`
+
+When configuring Entra app registration, make sure the redirect URI exactly matches:
+
+- `http://localhost:5000/api/auth/entra/callback`
+
 ## 4. What `deploy.ps1` installs
 
 | Component | How installed | Notes |
@@ -64,6 +73,11 @@ The script interactively prompts for every required value, prints a summary, and
 | `Redis` | Redis key-value store |
 
 All services are set to `Automatic` start — they come back up after a reboot automatically.
+
+Auth flow note:
+
+- Core flow is Entra-first (direct registration into Entra, then Microsoft sign-in).
+- OTP is optional and not required for the primary registration/login experience.
 
 ## 6. Service management commands
 

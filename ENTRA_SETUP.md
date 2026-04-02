@@ -99,8 +99,7 @@ Follow these steps exactly to configure Entra External ID for this project.
    - Search for and add: **`User.ReadWrite.All`**
    - Search for and add: **`Organization.Read.All`**
    - This allows the backend to create and look up users in Entra on behalf of the app
-     (used when someone registers via Email OTP — their account is automatically
-     provisioned in Entra External ID).
+     (used by direct registration so new users are provisioned in Entra External ID).
 4. Click **Grant admin consent for [your org]** (requires Global Admin).
    Both delegated and application permissions must show a green ✓ checkmark.
 
@@ -129,7 +128,29 @@ password to the backend registration endpoint.
 
 ---
 
-## 7 – Production Checklist
+## 7 – Quick Verify (Direct Entra Registration)
+
+Use this checklist after setup to confirm the exact flow requirement is working.
+
+1. Start app and backend, then open the Register page.
+2. Register with email, name, and password.
+3. Expected API result: account created in Entra and mirrored locally.
+4. Open Entra admin center in the External tenant:
+   - **External Identities → All users**
+   - Search for the registered email
+   - Confirm user exists
+5. Return to app Login page and click **Sign in with Microsoft**.
+6. Sign in using the same email/password created at registration.
+7. Expected result: redirect to dashboard with valid app session cookies.
+
+If registration fails with tenant-domain mismatch:
+
+- Set `ENTRA_TENANT_DOMAIN` to the exact **Initial domain** shown in tenant Overview (full `*.onmicrosoft.com`).
+- Confirm `Organization.Read.All` and `User.ReadWrite.All` application permissions are granted with admin consent.
+
+---
+
+## 8 – Production Checklist
 
 | Item | Action |
 |------|--------|

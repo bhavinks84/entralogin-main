@@ -4,8 +4,9 @@ A production-ready authentication system built with **React + Vite** (frontend) 
 
 ## Features
 
-- **Email OTP sign-up/sign-in** — works with any email (Gmail, Outlook, custom domains)
-- **Microsoft Entra ID sign-in** — for work/school accounts via MSAL OAuth2 flow
+- **Direct Entra account registration** — create Entra External ID users from the app with email + profile + password
+- **Microsoft Entra sign-in** — primary login path via MSAL OAuth2 flow
+- **Optional OTP flow** — available as an add-on path, not required for core auth
 - **JWT + Refresh token rotation** stored in HttpOnly cookies (not localStorage)
 - **CSRF protection** on OAuth2 state parameter
 - **Role-based access control** — `user`, `moderator`, `admin`
@@ -81,7 +82,7 @@ EntraLogin/
 
 - Node.js 18+
 - MongoDB (local or Atlas)
-- Redis (local or Redis Cloud)
+- Redis (optional but recommended for refresh token rotation)
 - A Microsoft account (to create the Entra External tenant)
 
 ---
@@ -92,7 +93,7 @@ EntraLogin/
 
 Follow **[ENTRA_SETUP.md](./ENTRA_SETUP.md)** to create your External tenant, register the application, and obtain the required credentials.
 
-For a concise end-to-end explanation of how registration, Entra sign-in, and app session creation work together, see **[AUTH_PROCESS_FLOW.md](./AUTH_PROCESS_FLOW.md)**.
+For a concise end-to-end explanation of how direct registration, Entra sign-in, and app session creation work together, see **[AUTH_PROCESS_FLOW.md](./AUTH_PROCESS_FLOW.md)**.
 
 ### 2 – Backend setup
 
@@ -122,11 +123,13 @@ App opens at `http://localhost:3000`. The Vite dev server proxies `/api` → `ht
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/api/auth/otp/request` | Public | Send OTP to email |
-| POST | `/api/auth/otp/verify` | Public | Verify OTP, create/login user |
+| POST | `/api/auth/register` | Public | Create account in Entra External ID and mirror locally |
 | GET  | `/api/auth/entra` | Public | Redirect to Entra ID login |
 | GET  | `/api/auth/entra/callback` | Public | OAuth2 callback |
+| POST | `/api/auth/otp/request` | Public | Optional: send OTP to email |
+| POST | `/api/auth/otp/verify` | Public | Optional: verify OTP, create/login user |
 | GET  | `/api/auth/me` | JWT | Get current user |
+| GET  | `/api/auth/session` | Public | Get current session user or null |
 | POST | `/api/auth/logout` | Public | Clear cookies & revoke token |
 | POST | `/api/auth/refresh` | Cookie | Rotate refresh token |
 | PUT  | `/api/auth/profile` | JWT | Update profile |
@@ -143,7 +146,7 @@ App opens at `http://localhost:3000`. The Vite dev server proxies `/api` → `ht
 
 - Access tokens expire in **15 minutes**; refresh tokens in **7 days**.
 - Refresh tokens are stored in Redis and revoked on logout (token rotation).
-- OTPs are stored in Redis with a 10-minute TTL and deleted after first use.
+- OTPs are stored in Redis with a 10-minute TTL and deleted after first use (optional path).
 - Password reset tokens are SHA-256 hashed before being stored in MongoDB.
 - CSRF is mitigated on the OAuth2 flow using a random `state` parameter validated via cookie.
 - All auth cookies are `HttpOnly`, `SameSite`, and `Secure` in production.
