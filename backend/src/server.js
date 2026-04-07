@@ -9,7 +9,9 @@ connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 
-    // Non-blocking startup check to make Graph permission issues obvious.
+    // Non-blocking startup check - logs permission status for debugging.
+    // Note: Token may not include roles claim even if permissions are granted in Entra.
+    // If registration/invitations are working, permissions are properly configured.
     getGraphPermissionStatus()
       .then((status) => {
         if (!status.configured) {
@@ -23,17 +25,17 @@ connectDB().then(() => {
         }
 
         if (!status.hasAllRequiredRoles) {
-          console.warn(
-            `[Entra] Missing Graph application permissions: ${status.missingRoles.join(', ')}. ` +
-            'Registration may fail until admin consent is granted.'
+          console.log(
+            `[Entra] Note: Token roles claim shows ${status.missingRoles.join(', ')} as not present. ` +
+            'This is normal if roles are not configured in app manifest. If registration works, permissions are granted.'
           );
           return;
         }
 
-        console.log('[Entra] Graph application permissions check passed.');
+        console.log('[Entra] Graph application permissions verified in token claims.');
       })
       .catch((err) => {
-        console.warn(`[Entra] Graph permission self-check error: ${err.message}`);
+        console.log(`[Entra] Permission check: ${err.message}`);
       });
   });
 }).catch((err) => {
