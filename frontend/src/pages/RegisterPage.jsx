@@ -11,11 +11,6 @@ const registerSchema = z.object({
   displayName: z.string().min(2, 'Name must be at least 2 characters').max(100),
   givenName: z.string().max(100).optional(),
   surname: z.string().max(100).optional(),
-  password: z.string().min(8, 'Password must be at least 8 characters').max(128),
-  confirmPassword: z.string().min(1, 'Please confirm your password'),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: 'Passwords do not match',
-  path: ['confirmPassword'],
 });
 
 export default function RegisterPage() {
@@ -32,13 +27,11 @@ export default function RegisterPage() {
   const onRegister = async (data) => {
     setLoading(true);
     try {
-      const { confirmPassword, ...payload } = data;
-      void confirmPassword;
-      const { data: result } = await authService.register(payload);
-      toast.success(result.message || 'Account created in Entra.');
+      const { data: result } = await authService.register(data);
+      toast.success(result.message || 'Invitation sent. Check your email.');
       navigate('/login', { replace: true });
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to create account in Entra');
+      toast.error(err.response?.data?.error || 'Failed to send invitation');
     } finally {
       setLoading(false);
     }
@@ -47,9 +40,9 @@ export default function RegisterPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
-        <h1 className="mb-1 text-center text-2xl font-bold text-gray-900">Create an account</h1>
+        <h1 className="mb-1 text-center text-2xl font-bold text-gray-900">Request access</h1>
         <p className="mb-6 text-center text-sm text-gray-500">
-          Register once, then sign in with Microsoft on the next screen.
+          You’ll receive a Microsoft invitation email to join as a guest.
         </p>
 
         <form onSubmit={handleSubmit(onRegister)} noValidate className="space-y-4">
@@ -110,40 +103,12 @@ export default function RegisterPage() {
             )}
           </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Password</label>
-            <input
-              type="password"
-              autoComplete="new-password"
-              {...register('password')}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-primary-600 focus:outline-none"
-              placeholder="At least 8 characters"
-            />
-            {errors.password && (
-              <p className="mt-1 text-xs text-red-600">{errors.password.message}</p>
-            )}
-          </div>
-
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Confirm password</label>
-            <input
-              type="password"
-              autoComplete="new-password"
-              {...register('confirmPassword')}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-primary-600 focus:outline-none"
-              placeholder="Re-enter your password"
-            />
-            {errors.confirmPassword && (
-              <p className="mt-1 text-xs text-red-600">{errors.confirmPassword.message}</p>
-            )}
-          </div>
-
           <button
             type="submit"
             disabled={loading}
             className="w-full rounded-lg bg-primary-600 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:opacity-60"
           >
-            {loading ? 'Creating account in Entra...' : 'Create Entra account'}
+            {loading ? 'Sending invitation...' : 'Send invitation'}
           </button>
         </form>
 

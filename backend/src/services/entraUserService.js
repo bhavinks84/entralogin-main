@@ -2,7 +2,7 @@ const { ConfidentialClientApplication } = require('@azure/msal-node');
 const crypto = require('crypto');
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
-const REQUIRED_GRAPH_APP_ROLES = ['User.ReadWrite.All', 'Organization.Read.All'];
+const REQUIRED_GRAPH_APP_ROLES = ['User.Invite.All', 'User.Read.All', 'Organization.Read.All'];
 
 // Separate MSAL instance for Graph API client-credentials flow.
 // Uses the standard AAD authority (not the CIAM ciamlogin.com endpoint, which
@@ -256,19 +256,89 @@ const createEntraUser = async ({ email, displayName, givenName, surname, passwor
 const findEntraUserByEmail = async (email) => {
   if (!isEntraConfigured()) return null;
 
-  const token  = await getGraphToken();
-  const filter = encodeURIComponent(
-    `identities/any(id:id/issuerAssignedId eq '${email}' and id/signInType eq 'emailAddress')`
-  );
+  const token = await getGraphToken();
+  const safeEmail = String(email).replace(/'/g, "''");
 
-  const response = await fetch(
-    `${GRAPH_BASE}/users?$filter=${filter}&$select=id,displayName,givenName,surname,mail`,
+  // B2B guest users have their external email stored in the `mail` field.
+  const mailFilter = encodeURIComponent(`mail eq '${safeEmail}'`);
+  const mailRes = await fetch(
+    `${GRAPH_BASE}/users?$filter=${mailFilter}&$select=id,displayName,givenName,surname,mail`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
+  if (mailRes.ok) {
+    const mailData = await mailRes.json();
+    if (mailData.value?.[0]) return mailData.value[0];
+  }
 
-  if (!response.ok) return null;
+  // Fallback: identity-based filter for CIAM / External ID local accounts.
+  const idFilter = encodeURIComponent(
+    `identities/any(id:id/issuerAssignedId eq '${safeEmail}' and id/signInType eq 'emailAddress')`
+  );
+  const idRes = await fetch(
+    `${GRAPH_BASE}/users?$filter=${idFilter}&$select=id,displayName,givenName,surname,mail`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!idRes.ok) return null;
+  const idData = await idRes.json();
+  return idData.value?.[0] ?? null;
+};
+
+/**
+ * Invite an external user to the workforce tenant via B2B invitation
+ * (Microsoft Graph POST /v1.0/invitations).
+ *
+ * The invitee receives an email with a redemption link and becomes a Guest
+ * user (External Identity) fully supported in the workforce tenant.
+ *
+ * Requires application permission: User.Invite.All
+ *
+ * @returns {object|null} Graph invitation object (includes .invitedUser.id
+ *   and .inviteRedeemUrl) or null in dev mode.
+ */
+const inviteEntraUser = async ({ email, displayName, redirectUrl }) => {
+  if (!isEntraConfigured()) {
+    console.log(`[DEV] Skipping Entra B2B invitation for ${email} – configure ENTRA_* vars to enable.`);
+    return null;
+  }
+
+  const token = await getGraphToken();
+  const body = {
+    invitedUserEmailAddress: email,
+    invitedUserDisplayName: displayName || email.split('@')[0],
+    inviteRedirectUrl: redirectUrl || process.env.FRONTEND_URL || 'https://localhost',
+    sendInvitationMessage: true,
+  };
+
+  const response = await fetch(`${GRAPH_BASE}/invitations`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
   const data = await response.json();
-  return data.value?.[0] ?? null;
+
+  if (response.ok) {
+    console.log(`[Entra] Invited ${email} as B2B guest (id: ${data.invitedUser?.id}, status: ${data.status})`);
+    return data;
+  }
+
+  const code = data.error?.code;
+  const msg = data.error?.message || response.statusText;
+
+  if (msg.toLowerCase().includes('already exists')) {
+    console.log(`[Entra] Guest ${email} already exists, linking existing account.`);
+    const existing = await findEntraUserByEmail(email);
+    return existing ? { invitedUser: { id: existing.id } } : null;
+  }
+
+  if (
+    code === 'Authorization_RequestDenied' ||
+    msg.toLowerCase().includes('insufficient privileges')
+  ) {
+    throw buildGraphPrivilegeError(msg);
+  }
+
+  throw new Error(`Microsoft Graph invitation error: ${msg}`);
 };
 
 // ---------------------------------------------------------------------------
@@ -346,4 +416,4 @@ const getGraphPermissionStatus = async () => {
   }
 };
 
-module.exports = { createEntraUser, findEntraUserByEmail, isEntraConfigured, getGraphPermissionStatus };
+module.exports = { inviteEntraUser, findEntraUserByEmail, isEntraConfigured, getGraphPermissionStatus };

@@ -11,7 +11,7 @@ const { sendOtp, verifyOtp } = require('../services/otpService');
 const { issueTokens, rotateRefreshToken, revokeRefreshToken, setCookies, clearCookies } = require('../services/tokenService');
 const { requestPasswordReset, resetPassword } = require('../services/passwordService');
 const {
-  createEntraUser,
+  inviteEntraUser,
   findEntraUserByEmail,
   isEntraConfigured,
   getGraphPermissionStatus,
@@ -36,7 +36,6 @@ router.post(
     body('displayName').trim().isLength({ min: 2, max: 100 }),
     body('givenName').optional().trim().isLength({ max: 100 }),
     body('surname').optional().trim().isLength({ max: 100 }),
-    body('password').isString().isLength({ min: 8, max: 128 }),
   ],
   validate,
   async (req, res) => {
@@ -47,14 +46,15 @@ router.post(
         });
       }
 
-      const { email, displayName, givenName, surname, password } = req.body;
+      const { email, displayName, givenName, surname } = req.body;
 
-      const entraUser = await createEntraUser({ email, displayName, givenName, surname, password });
-      if (!entraUser?.id) {
-        return res.status(500).json({ error: 'Failed to create user in Entra.' });
+      const invitation = await inviteEntraUser({ email, displayName, redirectUrl: process.env.FRONTEND_URL });
+      const entraGuestId = invitation?.invitedUser?.id;
+      if (!entraGuestId) {
+        return res.status(500).json({ error: 'Failed to invite user via Entra B2B.' });
       }
 
-      let user = await User.findOne({ $or: [{ email }, { entraExternalId: entraUser.id }] });
+      let user = await User.findOne({ $or: [{ email }, { entraExternalId: entraGuestId }] });
       const isNewUser = !user;
 
       if (!user) {
@@ -64,20 +64,20 @@ router.post(
           givenName,
           surname,
           emailVerified: true,
-          entraExternalId: entraUser.id,
+          entraExternalId: entraGuestId,
         });
       } else {
         user.displayName = user.displayName || displayName;
         user.givenName = user.givenName || givenName;
         user.surname = user.surname || surname;
         user.emailVerified = true;
-        user.entraExternalId = user.entraExternalId || entraUser.id;
+        user.entraExternalId = user.entraExternalId || entraGuestId;
         await user.save();
       }
 
       res.status(isNewUser ? 201 : 200).json({
         message: isNewUser
-          ? 'Account created in Entra. Continue with Microsoft sign-in.'
+          ? 'Invitation sent. Check your email to accept and continue with Microsoft sign-in.'
           : 'Account already exists. Continue with Microsoft sign-in.',
         user: user.toPublicJSON(),
         isNewUser,
@@ -134,21 +134,21 @@ router.post(
       const isNewUser = !user;
 
       if (!user) {
-        // ── Provision the user in Entra External ID first ──────────────────
-        // Every OTP-registered account is mirrored into Entra so users can
+        // ── Invite the user to Entra via B2B invitation ─────────────────
+        // Every OTP-registered account is invited into Entra so users can
         // also sign in later via the "Sign in with Microsoft" button.
         let entraExternalId;
         try {
-          const entraUser = await createEntraUser({
+          const invitation = await inviteEntraUser({
             email,
             displayName: displayName || email.split('@')[0],
           });
-          entraExternalId = entraUser?.id;
+          entraExternalId = invitation?.invitedUser?.id;
         } catch (entraErr) {
-          // Log but don't block registration – a sync can be retried later.
-          console.error('[Entra] User provisioning failed:', entraErr.message);
+          // Log but don't block registration – the invite can be retried later.
+          console.error('[Entra] B2B invitation failed:', entraErr.message);
         }
-        // ───────────────────────────────────────────────────────────────────
+        // ──────────────────────────────────────────────────────────────────
 
         user = await User.create({
           email,
@@ -165,9 +165,9 @@ router.post(
               user.entraExternalId = entraUser.id;
               console.log(`[Entra] Linked existing user ${email} to Entra id ${entraUser.id}`);
             } else {
-              // Not in Entra yet – provision now
-              const created = await createEntraUser({ email, displayName: user.displayName });
-              if (created) user.entraExternalId = created.id;
+              // Not in Entra yet – invite now
+              const invited = await inviteEntraUser({ email, displayName: user.displayName });
+              if (invited) user.entraExternalId = invited.invitedUser?.id;
             }
           } catch (entraErr) {
             console.error('[Entra] Backfill failed:', entraErr.message);
