@@ -1,4 +1,6 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -10,7 +12,7 @@ const adminRoutes = require('./routes/admin');
 
 const app = express();
 
-// Required behind nginx so rate limiting and secure cookies behave correctly.
+// Keep proxy support enabled when deployed behind reverse proxies.
 app.set('trust proxy', 1);
 
 // Security headers
@@ -43,6 +45,24 @@ app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+const shouldServeFrontend = process.env.SERVE_FRONTEND === 'true';
+if (shouldServeFrontend) {
+  const distPath = process.env.FRONTEND_DIST_PATH
+    ? path.resolve(process.cwd(), process.env.FRONTEND_DIST_PATH)
+    : path.resolve(__dirname, '..', '..', 'frontend', 'dist');
+
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+
+    // Serve SPA routes from index.html while keeping /api for backend routes.
+    app.get(/^\/(?!api).*/, (_req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  } else {
+    console.warn(`[Static] SERVE_FRONTEND is true but dist path was not found: ${distPath}`);
+  }
+}
 
 // 404 handler
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));

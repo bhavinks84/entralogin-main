@@ -1,159 +1,92 @@
 # Authentication Process Flow
 
-This project uses Microsoft Entra External ID for identity and sign-in.
+This document describes the currently working, invitation-based flow.
 
-Core requirement implemented:
+## Core Flow
 
-1. User registers in this app with required details.
-2. Backend creates that account in Entra External ID.
-3. User signs in using Microsoft Entra.
+1. User submits register form (`email`, `displayName`, optional names).
+2. Backend sends invitation using Microsoft Graph `/invitations`.
+3. User receives invitation email and accepts it.
+4. User clicks Sign in with Microsoft in the app.
+5. Backend handles OAuth callback, creates/updates local user, issues app cookies.
 
-OTP is not required for the core login/registration flow.
+No password is collected on app registration.
 
----
+## Actors
 
-## High-Level Model
+- Frontend app (React)
+- Backend API (Express)
+- Microsoft Entra External ID
+- Microsoft Graph API
+- MongoDB (local user mirror)
+- Redis (refresh token lifecycle)
 
-- Entra account: the identity account created in Microsoft Entra External ID.
-- Local app user: optional app profile/role mirror in MongoDB.
-- App session: the JWT access token and refresh token stored in HttpOnly cookies.
-
-This means Entra is the source of authentication, while the backend still manages app session cookies and optional local app data.
-
----
-
-## Direct Registration Flow
-
-The direct registration form creates the account in Entra first, then mirrors it into the local database.
-
-### What happens
-
-1. The frontend registration form submits `email`, `displayName`, optional name fields, and `password` to `POST /api/auth/register`.
-2. The backend validates that Entra is configured.
-3. The backend calls Microsoft Graph and creates a local Entra account in the External tenant.
-4. The backend optionally saves or updates a matching local MongoDB user with `entraExternalId` set to the Entra user id.
-5. The API returns a success message telling the user to continue with Microsoft sign-in.
-
-### Important detail
-
-Registration does not immediately create an app session. It provisions the Entra identity first. The user then signs in through the Entra login flow, and only after that does the app issue its own cookies.
-
-### Sequence
+## Invitation Registration Sequence
 
 ```mermaid
 sequenceDiagram
     participant UI as Frontend
-    participant API as Backend API
+    participant API as Backend
     participant Graph as Microsoft Graph
-    participant DB as MongoDB
+    participant User as End User
 
     UI->>API: POST /api/auth/register
-    API->>Graph: Create Entra External ID user
-    Graph-->>API: Entra user id
-    API->>DB: Create or update local user
-    DB-->>API: Local user saved
-    API-->>UI: Account created in Entra
+    API->>Graph: POST /v1.0/invitations
+    Graph-->>API: invitation + invitedUser.id
+    API-->>UI: 201 Invitation sent
+    Graph-->>User: Invitation email
 ```
 
----
-
-## OTP Note
-
-OTP can exist as an optional add-on flow, but it is not required for the Entra-first requirement and is not part of the primary registration and login path.
-
-## Entra Login Flow
-
-The Microsoft sign-in button starts an OAuth/OpenID Connect flow through the backend.
-
-### What happens
-
-1. The frontend redirects the browser to `GET /api/auth/entra`.
-2. The backend generates a random `state` value and stores it in a short-lived cookie.
-3. The backend builds an MSAL authorization URL and redirects the browser to Microsoft.
-4. The user signs in on the Entra-hosted page.
-5. Microsoft redirects back to `GET /api/auth/entra/callback` with an authorization code.
-6. The backend validates the `state` cookie to prevent CSRF.
-7. The backend exchanges the code for tokens using MSAL.
-8. The backend reads the Entra claims, especially the user id and email.
-9. The backend finds or creates the optional local app user and links it with `entraExternalId`.
-10. The backend issues its own access token and refresh token.
-11. The backend stores those tokens in HttpOnly cookies and redirects the user to the dashboard.
-
-### Sequence
+## Microsoft Sign-In Sequence
 
 ```mermaid
 sequenceDiagram
     participant Browser
-    participant API as Backend API
+    participant API as Backend
     participant Entra as Microsoft Entra
     participant DB as MongoDB
-    participant Redis as Redis
+    participant Redis
 
     Browser->>API: GET /api/auth/entra
-    API-->>Browser: Set oauth_state cookie + redirect to Entra
-    Browser->>Entra: User signs in
-    Entra-->>Browser: Redirect with auth code
-    Browser->>API: GET /api/auth/entra/callback?code=...
-    API->>API: Validate state cookie
-    API->>Entra: Exchange code for tokens
-    Entra-->>API: ID token claims
-    API->>DB: Find or create local user
-    API->>Redis: Store refresh token allowlist entry
-    API-->>Browser: Set access/refresh cookies + redirect /dashboard
+    API-->>Browser: state cookie + redirect to Entra
+    Browser->>Entra: Authenticate user
+    Entra-->>Browser: Redirect /api/auth/entra/callback?code=...
+    Browser->>API: Callback request
+    API->>API: Validate state
+    API->>Entra: Exchange code for tokens (MSAL)
+    API->>DB: Find/create local user by Entra identity
+    API->>Redis: Store refresh token record
+    API-->>Browser: Set HttpOnly cookies + redirect /dashboard
 ```
 
----
+## Session Model
 
-## How Entra Creation Works
+After successful Entra authentication, backend issues app tokens:
 
-User creation in Entra happens through Microsoft Graph using application permissions.
+- Access token: short-lived
+- Refresh token: long-lived, rotated and revocable
 
-The backend sends a request to Graph's `/users` endpoint with:
+Both are sent as HttpOnly cookies.
 
-- `identities.signInType = emailAddress`
-- `identities.issuer = <tenant>.onmicrosoft.com`
-- `identities.issuerAssignedId = user's email`
-- `passwordProfile.password = submitted password` for direct registration, or a generated password for OTP provisioning
+## Endpoints Involved
 
-This is why the Entra setup requires application permissions such as `User.ReadWrite.All` and `Organization.Read.All`.
+- `POST /api/auth/register` -> send invitation
+- `GET /api/auth/entra` -> start OAuth flow
+- `GET /api/auth/entra/callback` -> complete OAuth flow
+- `GET /api/auth/session` -> check active session
+- `POST /api/auth/refresh` -> rotate refresh token
+- `POST /api/auth/logout` -> revoke refresh + clear cookies
 
----
+## Required Entra/Graph Permissions
 
-## How App Login Works After Entra Authentication
+Application permissions used by invitation flow include:
 
-After Entra authenticates the user, the backend does not reuse the Entra token directly for app authorization.
+- `User.Invite.All`
+- `User.Read.All`
+- `Organization.Read.All`
 
-Instead, it does the following:
+Admin consent must be granted in the same tenant configured in `ENTRA_TENANT_ID`.
 
-1. Creates a short-lived app access token.
-2. Creates a longer-lived refresh token.
-3. Stores refresh token state in Redis.
-4. Sends both tokens as HttpOnly cookies.
+## Optional Legacy Paths
 
-The app then uses those cookies for:
-
-- protected API access
-- session restore on page load
-- refresh token rotation
-- logout and token revocation
-
-This keeps the application session model independent from the Microsoft token lifecycle.
-
----
-
-## Files Involved
-
-- `frontend/src/services/authService.js`: starts registration and Entra login requests.
-- `backend/src/routes/auth.js`: main registration, callback, session, refresh, and logout routes.
-- `backend/src/services/entraUserService.js`: Microsoft Graph user creation and lookup.
-- `backend/src/config/msal.js`: MSAL auth URL and code exchange logic.
-- `backend/src/services/tokenService.js`: app JWT issuance, cookie handling, and refresh rotation.
-
----
-
-## Short Summary
-
-- Direct registration creates the user in Entra first, then optionally mirrors that user locally.
-- Entra login authenticates the user with Microsoft, then the backend creates the app session.
-- OTP is optional and not part of the core requirement flow.
-- Redis is used to manage refresh token validity for logout and rotation.
+OTP and password-reset endpoints still exist, but they are optional and not required for the invitation-based core flow.

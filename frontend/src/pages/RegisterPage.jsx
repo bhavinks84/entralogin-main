@@ -31,7 +31,14 @@ export default function RegisterPage() {
       toast.success(result.message || 'Invitation sent. Check your email.');
       navigate('/login', { replace: true });
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to send invitation');
+      // Handle validation errors
+      const errorData = err.response?.data;
+      if (errorData?.errors && Array.isArray(errorData.errors)) {
+        const errorMsg = errorData.errors.map(e => `${e.path}: ${e.msg}`).join(', ');
+        toast.error(errorMsg);
+      } else {
+        toast.error(errorData?.error || 'Failed to send invitation');
+      }
     } finally {
       setLoading(false);
     }

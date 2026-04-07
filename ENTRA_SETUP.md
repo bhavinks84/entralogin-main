@@ -1,175 +1,83 @@
-# Microsoft Entra External ID – Setup Guide
+# Microsoft Entra External ID Setup
 
-Follow these steps exactly to configure Entra External ID for this project.
+Use this guide for the invitation-based authentication flow.
 
----
+## 1. Create or Select External Tenant
 
-## 1 – Create an External Tenant
+1. Open Microsoft Entra admin center.
+2. Switch to your External ID tenant.
+3. Note tenant values:
+- Tenant ID -> `ENTRA_TENANT_ID`
+- Initial domain (`*.onmicrosoft.com`) -> `ENTRA_TENANT_DOMAIN`
+- Subdomain portion -> `ENTRA_TENANT_SUBDOMAIN`
 
-> External ID uses a **separate tenant** from your workforce (employee) Azure AD. Do not use your main Azure tenant.
+## 2. Register App
 
-> Current Microsoft portal behavior: you may see an extra **Add a subscription** step.
-> In many tenants, creating an External tenant now requires:
-> - an **Azure subscription**
-> - a **resource group**
-> - an account with at least **Tenant Creator** rights on that subscription/resource group
->
-> If this is your first External tenant, Microsoft may offer a trial option that does not require a subscription. Otherwise, the subscription step is expected.
+1. App registrations -> New registration.
+2. Platform: Web.
+3. Add redirect URI matching your runtime app URL.
 
-1. Go to [https://entra.microsoft.com](https://entra.microsoft.com) and sign in with a Microsoft account.
-2. In the left sidebar, click **"Microsoft Entra ID"** → **"Overview"** → **"Manage tenants"**.
-3. Click **"+ Create"**.
-4. Choose **"External"** (NOT "Workforce") and click **Next: Configuration**.
-5. Fill in:
-   - **Organization name**: e.g. `My App External`
-   - **Initial domain name**: e.g. `myapp` → becomes `myapp.onmicrosoft.com`
-   - **Country/Region**: Your region
-6. If the portal shows **Add a subscription**, select:
-   - **Subscription**
-   - **Resource group**
-   - resource group location if prompted
-7. Click **Review + Create**, then **Create**.
-8. Wait for the tenant to provision, then click **"Switch to the new tenant"**.
+Examples:
 
----
+- Local single-port: `http://localhost:5000/api/auth/entra/callback`
+- Production: `https://auth.your-domain.com/api/auth/entra/callback`
 
-## 2 – Enable "Email with one-time passcode" Identity Provider
+Save:
 
-1. In your **External** tenant, go to:
-   **Home → External Identities → All identity providers**
-2. Click **"Email one-time passcode"**.
-3. Set it to **"Enabled"** and save.
+- Application (client) ID -> `ENTRA_CLIENT_ID`
 
----
+## 3. Create Client Secret
 
-## 3 – Register Your Application
+1. Certificates & secrets -> New client secret.
+2. Copy secret value immediately -> `ENTRA_CLIENT_SECRET`.
 
-1. Go to **App registrations → New registration**.
-2. Fill in:
-   - **Name**: `EntraLogin Web App`
-   - **Supported account types**: **"Accounts in this organizational directory only"**
-   - **Redirect URI**:
-     - Platform: **Web**
-     - URI: `http://localhost:5000/api/auth/entra/callback`
-3. Click **Register**.
-4. Note down **Application (client) ID** → this is `ENTRA_CLIENT_ID`.
-5. Note down **Directory (tenant) ID** → this is `ENTRA_TENANT_ID`.
-6. Note the **subdomain** from your tenant domain `<subdomain>.onmicrosoft.com` → this is `ENTRA_TENANT_SUBDOMAIN`.
-7. Note the **full initial domain** (for example `myapp.onmicrosoft.com`) → this is `ENTRA_TENANT_DOMAIN`.
+## 4. Add API Permissions (Microsoft Graph)
 
-### Create a Client Secret
+Add application permissions:
 
-1. In the app registration, go to **Certificates & secrets → New client secret**.
-2. Add a description (e.g. `dev`), choose an expiry (24 months), click **Add**.
-3. **Copy the secret Value immediately** — it won't be shown again.
-4. This is `ENTRA_CLIENT_SECRET`.
+- `User.Invite.All`
+- `User.Read.All`
+- `Organization.Read.All`
 
-### Add Front-Channel Logout URL
+Grant admin consent.
 
-1. Go to **Authentication** in the app registration.
-2. Under **Front-channel logout URL**, enter: `http://localhost:3000`
-3. Save.
+## 5. Configure Environment
 
----
-
-## 4 – Create a User Flow (Sign-up / Sign-in)
-
-1. Go to **External Identities → User flows → New user flow**.
-2. Choose **"Sign up and sign in"** and click **Create**.
-3. **Name**: `B2C_1_signupsignin` (Azure will prefix it; note the full name).
-
-4. Under **Identity providers**, check:
-   - ✅ **Email with one-time passcode**
-   - ✅ **Microsoft Account** (optional – for personal accounts)
-
-5. Under **User attributes**, select:
-   - ✅ Email address
-   - ✅ Display name
-   - ✅ Given name
-   - ✅ Surname
-
-6. Click **Create**.
-
-### Link the User Flow to Your App
-
-1. Open the user flow you just created.
-2. Click **Applications → Add application**.
-3. Select **EntraLogin Web App** and save.
-
----
-
-## 5 – Configure API Permissions
-
-1. In your app registration → **API permissions → Add a permission**.
-2. Choose **Microsoft Graph → Delegated permissions**, add:
-   - `openid`
-   - `profile`
-   - `email`
-   - `offline_access`
-3. Now add **Application permissions** (not Delegated) for back-end Graph calls:
-   - Click **Add a permission → Microsoft Graph → Application permissions**
-   - Search for and add: **`User.ReadWrite.All`**
-   - Search for and add: **`Organization.Read.All`**
-   - This allows the backend to create and look up users in Entra on behalf of the app
-     (used by direct registration so new users are provisioned in Entra External ID).
-4. Click **Grant admin consent for [your org]** (requires Global Admin).
-   Both delegated and application permissions must show a green ✓ checkmark.
-
----
-
-## 6 – Update Your `.env` File
+Update `backend/.env`:
 
 ```env
-ENTRA_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-ENTRA_CLIENT_SECRET=your-secret-value
-ENTRA_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-ENTRA_TENANT_SUBDOMAIN=myapp
-ENTRA_TENANT_DOMAIN=myapp.onmicrosoft.com
+ENTRA_CLIENT_ID=...
+ENTRA_CLIENT_SECRET=...
+ENTRA_TENANT_ID=...
+ENTRA_TENANT_SUBDOMAIN=...
+ENTRA_TENANT_DOMAIN=...onmicrosoft.com
 ENTRA_REDIRECT_URI=http://localhost:5000/api/auth/entra/callback
 ```
 
-The MSAL authority URL constructed in code will be:
+Also set:
+
+```env
+FRONTEND_URL=http://localhost:5000
 ```
-https://<ENTRA_TENANT_SUBDOMAIN>.ciamlogin.com/<ENTRA_TENANT_ID>
-```
 
-For direct backend-driven user creation (no OTP/SMTP), local Entra accounts are
-created with `identities.signInType = emailAddress` and require a password.
-Your registration UI should collect password + confirm password and send the
-password to the backend registration endpoint.
+If you use split dev ports, set `FRONTEND_URL` to the frontend URL (for example `http://localhost:5173`) but keep `ENTRA_REDIRECT_URI` pointing to the backend callback URL.
 
----
+## 6. Verify End-to-End
 
-## 7 – Quick Verify (Direct Entra Registration)
+1. Open Register page.
+2. Submit an invitation request.
+3. Confirm invitation email arrives.
+4. Accept invitation.
+5. Return to app and click Sign in with Microsoft.
+6. Confirm callback succeeds and dashboard loads.
 
-Use this checklist after setup to confirm the exact flow requirement is working.
+## Common Errors
 
-1. Start app and backend, then open the Register page.
-2. Register with email, name, and password.
-3. Expected API result: account created in Entra and mirrored locally.
-4. Open Entra admin center in the External tenant:
-   - **External Identities → All users**
-   - Search for the registered email
-   - Confirm user exists
-5. Return to app Login page and click **Sign in with Microsoft**.
-6. Sign in using the same email/password created at registration.
-7. Expected result: redirect to dashboard with valid app session cookies.
+1. Redirect loop or hangs after invitation acceptance
+- Redirect URI mismatch between Entra app registration and `ENTRA_REDIRECT_URI`.
 
-If registration fails with tenant-domain mismatch:
+2. Graph permission denied
+- Missing admin consent for application permissions.
 
-- Set `ENTRA_TENANT_DOMAIN` to the exact **Initial domain** shown in tenant Overview (full `*.onmicrosoft.com`).
-- Confirm `Organization.Read.All` and `User.ReadWrite.All` application permissions are granted with admin consent.
-
----
-
-## 8 – Production Checklist
-
-| Item | Action |
-|------|--------|
-| Redirect URI | Add your production URI in the app registration |
-| Front-channel logout | Update to your production frontend URL |
-| `NODE_ENV=production` | Set in your deployment environment |
-| Rotate `JWT_SECRET` and `JWT_REFRESH_SECRET` | Use 64+ char random strings |
-| SMTP provider | Replace Ethereal with SendGrid, AWS SES, etc. |
-| HTTPS | Enforce on all cookies (`secure: true`) |
-| Custom domain | Optional – configure in Entra External ID settings |
+3. Wrong tenant domain behavior
+- `ENTRA_TENANT_DOMAIN` must match your tenant initial `*.onmicrosoft.com` domain.

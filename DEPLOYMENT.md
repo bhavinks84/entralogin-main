@@ -1,172 +1,164 @@
-# EntraLogin – Deployment Guide (Windows Server)
+# Deployment Guide
 
-Supported: **Windows Server 2016 / 2019 / 2022** · Script: `deploy.ps1`
+This guide focuses on a simple, server-agnostic deployment.
 
----
+## Lightweight Repository Notes
 
-## 1. Prerequisites
+- `node_modules` is intentionally not committed.
+- build output (`frontend/dist`) is intentionally not committed.
+- runtime logs (for example `deploy.log`) are intentionally not committed.
 
-- Windows Server 2016, 2019, or 2022
-- PowerShell 5.1 or later (included with all supported versions)
-- Administrator account
-- Inbound firewall rule for the chosen nginx port (script adds this automatically — do NOT use 80 or 443)
-- Internet access (script downloads packages automatically)
-- A domain name pointed at the server's IP (for SSL)
+On any fresh server checkout, always install dependencies before running.
 
-## 2. Upload code to the server
+## Recommended Architecture
 
-Copy the `EntraLogin` project folder to the server via RDP file-copy, SCP, or your preferred method:
+Use one public Node service:
 
+- Backend Express runs on one port (for example `5000`)
+- Backend serves built frontend files (`frontend/dist`)
+- Same origin handles UI + API + Entra callback
+
+This avoids port mismatch and removes nginx as a requirement.
+
+## Prerequisites
+
+- Node.js 18+
+- MongoDB
+- Redis
+- Valid Entra app registration and permissions
+
+## 1. Build and Install
+
+```bash
+# from repo root
+cd frontend
+npm ci
+npm run build
+
+cd ../backend
+npm ci --omit=dev
 ```
-\\server\C$\deploy\entralogin\   ← suggested location
+
+For local development (optional):
+
+```bash
+cd backend && npm ci
+cd ../frontend && npm ci
 ```
 
-Or use Git in PowerShell:
+## 2. Configure Environment
+
+Copy `backend/.env.example` to `backend/.env` and set at least:
+
+```env
+NODE_ENV=production
+PORT=5000
+SERVE_FRONTEND=true
+FRONTEND_DIST_PATH=../frontend/dist
+
+FRONTEND_URL=https://auth.your-domain.com
+ENTRA_REDIRECT_URI=https://auth.your-domain.com/api/auth/entra/callback
+
+MONGODB_URI=...
+REDIS_URL=...
+JWT_SECRET=...
+JWT_REFRESH_SECRET=...
+
+ENTRA_CLIENT_ID=...
+ENTRA_CLIENT_SECRET=...
+ENTRA_TENANT_ID=...
+ENTRA_TENANT_SUBDOMAIN=...
+ENTRA_TENANT_DOMAIN=...onmicrosoft.com
+```
+
+## 3. Start Service
+
+```bash
+cd backend
+npm start
+```
+
+Health check:
+
+- `GET /api/health` should return `{"status":"ok"}`
+
+## Docker Deployment (Recommended)
+
+This is the easiest path for most servers.
+
+1. Prepare environment:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Windows PowerShell alternative:
 
 ```powershell
-git clone https://github.com/bhavinks84/entralogin.git C:\deploy\entralogin
-cd C:\deploy\entralogin
+Copy-Item backend/.env.example backend/.env
 ```
 
-## 3. Run the deployment script
+2. Update `backend/.env` for single-port deployment:
 
-Open **PowerShell as Administrator**, then:
-
-```powershell
-cd C:\deploy\entralogin
-powershell -ExecutionPolicy Bypass -File deploy.ps1
+```env
+PORT=5000
+SERVE_FRONTEND=true
+FRONTEND_DIST_PATH=/app/frontend/dist
+FRONTEND_URL=http://localhost:5000
+ENTRA_REDIRECT_URI=http://localhost:5000/api/auth/entra/callback
 ```
 
-The script interactively prompts for every required value, prints a summary, and asks for confirmation before making any changes.
+3. Run stack:
 
-Default local port mapping used by the current setup:
+```bash
+docker compose up -d --build
+```
 
-- Public URL (nginx): `http://localhost:5000`
-- Backend API service: `http://localhost:5001`
+4. Verify:
 
-When configuring Entra app registration, make sure the redirect URI exactly matches:
+```bash
+curl http://localhost:5000/api/health
+```
+
+## 4. Run as Service
+
+Use your platform service manager:
+
+- Linux: `systemd`
+- Windows: NSSM / Task Scheduler / Windows Service wrapper
+- Container platforms: run `npm start` in backend after frontend build
+
+## 5. Entra Redirect URI Rules
+
+Your Entra app redirect URI must exactly match runtime URL:
+
+- `https://auth.your-domain.com/api/auth/entra/callback`
+
+If your app is reachable at `http://localhost:5000` in test, use:
 
 - `http://localhost:5000/api/auth/entra/callback`
 
-## 4. What `deploy.ps1` installs
+## Optional: Split Frontend/Backend in Dev
 
-| Component | How installed | Notes |
-|-----------|---------------|-------|
-| Node.js 20 LTS | Chocolatey `nodejs-lts` | Added to system PATH |
-| MongoDB 7.0 | Chocolatey `mongodb` | Registered as Windows service |
-| Redis 3.0 | Chocolatey `redis-64` | Registered as Windows service |
-| nginx 1.26 | Direct download from nginx.org | Installed to `C:\nginx` |
-| NSSM | Chocolatey `nssm` | Used to wrap nginx and Node.js as services |
+Dev-only example:
 
-> **Redis note:** `redis-64` is a maintained community Windows port of Redis 3.0.
-> For high-traffic production workloads consider:
-> - **Memurai** — Redis-compatible Windows service: https://www.memurai.com
-> - **Redis Cloud** — managed cloud Redis (free tier available): https://redis.io/cloud
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:5000`
+- Vite proxy `/api` -> backend
 
-## 5. Windows services created
+In this mode set:
 
-| Service name | What it runs |
-|--------------|-------------|
-| `entralogin-api` | Node.js Express backend |
-| `nginx-entralogin` | nginx reverse proxy + static files |
-| `MongoDB` | MongoDB database |
-| `Redis` | Redis key-value store |
+- `FRONTEND_URL=http://localhost:5173`
+- `ENTRA_REDIRECT_URI=http://localhost:5000/api/auth/entra/callback`
 
-All services are set to `Automatic` start — they come back up after a reboot automatically.
+## Troubleshooting
 
-Auth flow note:
+1. `422 password invalid on /register`
+- You are likely hitting an old service instance. Verify the frontend proxy target and backend port.
 
-- Core flow is Entra-first (direct registration into Entra, then Microsoft sign-in).
-- OTP is optional and not required for the primary registration/login experience.
+2. Invitation accepted but app keeps loading
+- Redirect URI mismatch in Entra app registration.
+- Ensure `ENTRA_REDIRECT_URI` and registered redirect URI are identical.
 
-## 6. Service management commands
-
-```powershell
-# Check status of all EntraLogin services
-sc query entralogin-api
-sc query nginx-entralogin
-
-# Stop / start
-net stop  entralogin-api
-net start entralogin-api
-
-# View logs
-Get-Content C:\Logs\entralogin\out.log -Tail 50 -Wait     # live tail
-Get-Content C:\Logs\entralogin\err.log -Tail 50           # errors
-Get-Content C:\nginx\logs\error.log    -Tail 20            # nginx errors
-
-# Edit service config (opens NSSM GUI)
-nssm edit entralogin-api
-nssm edit nginx-entralogin
-```
-
-## 7. SSL / HTTPS with win-acme
-
-After the script completes and DNS is resolving to your server:
-
-1. Download **win-acme** from https://www.win-acme.com
-2. Extract to `C:\win-acme`
-3. Run as Administrator:
-   ```
-   C:\win-acme\wacs.exe
-   ```
-4. Choose: *Manually input host names* → enter your domain → *nginx* as web installer
-5. win-acme will obtain a Let's Encrypt certificate and update `C:\nginx\conf\nginx.conf` automatically
-6. Update your Entra redirect URI to use `https://`
-
-## 8. Updating the application
-
-```powershell
-cd C:\deploy\entralogin
-
-# Pull latest code
-git pull origin main
-
-# Rebuild frontend
-cd frontend; npm install; npm run build; cd ..
-
-# Update backend dependencies (if package.json changed)
-cd backend; npm install --omit=dev; cd ..
-
-# Restart the backend service to pick up code changes
-net stop entralogin-api
-net start entralogin-api
-
-# Reload nginx if the config changed
-net stop nginx-entralogin
-net start nginx-entralogin
-```
-
-## 9. Troubleshooting (Windows)
-
-**Service fails to start**
-```powershell
-nssm status entralogin-api
-Get-Content C:\Logs\entralogin\err.log -Tail 50
-Get-EventLog -LogName Application -Newest 20 | Where-Object { $_.Source -eq 'entralogin-api' }
-```
-
-**Port 80 already in use (IIS or another service)**
-```powershell
-netstat -ano | findstr :80
-# Find the PID and stop that service, or change the nginx listen port
-```
-
-**MongoDB not connecting**
-```powershell
-sc query MongoDB
-mongosh --eval "db.adminCommand({ping:1})"
-```
-
-**Redis not connecting**
-```powershell
-sc query Redis
-redis-cli ping   # should return PONG
-```
-
-**nginx config test**
-```powershell
-C:\nginx\nginx.exe -p C:\nginx -t
-```
-
----
+3. Graph permission errors
+- Grant admin consent for required Graph app permissions in the same tenant as `ENTRA_TENANT_ID`.
