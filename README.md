@@ -1,5 +1,18 @@
 # EntraLogin
 
+## Overview
+
+This system acts as the authentication gateway for **Qlik QAP (Qlik Analytics Platform)** dashboards. The core flow is:
+
+1. A user registers or logs in through this application.
+2. On registration, the user is **automatically created in Microsoft Entra External ID** (Azure AD) via the Microsoft Graph API.
+3. **Qlik's user sync** pulls users from Entra / Active Directory and provisions access, so the newly registered user gains permission to view Qlik dashboards without any manual admin step.
+4. After a successful login, the user is redirected to the Qlik dashboard with an authenticated session.
+
+In short: **register here → auto-provisioned in Entra → Qlik picks up the user → dashboard access granted.**
+
+---
+
 A production-ready authentication system built with **React + Vite** (frontend) and **Express.js** (backend), using **Microsoft Entra External ID** as the identity provider.
 
 ## Features
